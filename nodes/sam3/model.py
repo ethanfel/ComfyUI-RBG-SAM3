@@ -3464,6 +3464,32 @@ class Sam3Image(torch.nn.Module):
             ]
             return backbone_out, img_feats, img_pos_embeds, vis_feat_sizes
 
+        # Pre-computed backbone features: keyed by frame_idx, value is forward_image() output
+        _pre_computed = backbone_out.get("pre_computed_frame_features")
+        if _pre_computed is not None:
+            if img_ids.numel() > 1:
+                _uid, _ = torch.unique(img_ids, return_inverse=True)
+            else:
+                _uid = img_ids
+            _fid = _uid.item() if _uid.numel() == 1 else None
+            if _fid is not None and _fid in _pre_computed:
+                _raw = _pre_computed[_fid]
+                _feats = {
+                    k: (
+                        [x.to(self.device) for x in v] if isinstance(v, list) else
+                        v.to(self.device) if isinstance(v, torch.Tensor) else v
+                    )
+                    for k, v in _raw.items()
+                }
+                _img_batch = backbone_out["img_batch_all_stages"]
+                _id_mapping = torch.full(
+                    (len(_img_batch),), -1, dtype=torch.long, device=self.device
+                )
+                _id_mapping[_uid] = 0
+                backbone_out = {**backbone_out, **_feats, "id_mapping": _id_mapping}
+                assert "backbone_fpn" in backbone_out
+                return self._get_img_feats(backbone_out, img_ids=img_ids)
+
         img_batch = backbone_out["img_batch_all_stages"]
         if img_ids.numel() > 1:
             unique_ids, _ = torch.unique(img_ids, return_inverse=True)
