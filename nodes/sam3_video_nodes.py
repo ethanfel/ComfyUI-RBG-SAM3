@@ -426,9 +426,17 @@ class SAM3Propagate:
                     "min": 0,
                     "max": 10000,
                     "tooltip": (
-                        "Maximum frames to prefetch into CPU RAM (0 = all frames). "
+                        "Maximum frames to prefetch (0 = all frames). "
                         "Reduce this if prefetch fills your RAM — e.g. 100 caches only the first "
                         "100 frames; remaining frames run the backbone normally."
+                    ),
+                }),
+                "prefetch_to_vram": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": (
+                        "Keep prefetched features on GPU instead of CPU RAM. "
+                        "Eliminates PCIe transfers during propagation (faster), "
+                        "but uses more VRAM. Only enable if you have spare VRAM."
                     ),
                 }),
             }
@@ -440,19 +448,19 @@ class SAM3Propagate:
     CATEGORY = "SAM3/video"
 
     @classmethod
-    def IS_CHANGED(cls, sam3_model, video_state, start_frame=0, end_frame=-1, direction="forward", prefetch_features=False, prefetch_batch_size=4, prefetch_max_frames=0):
+    def IS_CHANGED(cls, sam3_model, video_state, start_frame=0, end_frame=-1, direction="forward", prefetch_features=False, prefetch_batch_size=4, prefetch_max_frames=0, prefetch_to_vram=False):
         # Use object identity for caching - if upstream node is cached,
         # it returns the same object, so id() will match
         # This is more reliable than hashing content since video_state is immutable
-        result = (id(video_state), start_frame, end_frame, direction, prefetch_features, prefetch_batch_size, prefetch_max_frames)
+        result = (id(video_state), start_frame, end_frame, direction, prefetch_features, prefetch_batch_size, prefetch_max_frames, prefetch_to_vram)
         log.debug(f"IS_CHANGED SAM3Propagate: video_state id={id(video_state)}, result={result}")
         return result
 
-    def propagate(self, sam3_model, video_state, start_frame=0, end_frame=-1, direction="forward", prefetch_features=False, prefetch_batch_size=4, prefetch_max_frames=0):
+    def propagate(self, sam3_model, video_state, start_frame=0, end_frame=-1, direction="forward", prefetch_features=False, prefetch_batch_size=4, prefetch_max_frames=0, prefetch_to_vram=False):
         import comfy.model_management
         """Run propagation using reconstructed inference state."""
         # Create cache key using video_state object id (since it's immutable and cached upstream)
-        cache_key = (id(video_state), start_frame, end_frame, direction, prefetch_features, prefetch_batch_size, prefetch_max_frames)
+        cache_key = (id(video_state), start_frame, end_frame, direction, prefetch_features, prefetch_batch_size, prefetch_max_frames, prefetch_to_vram)
 
         # Check if we have cached result
         if cache_key in SAM3Propagate._cache:
@@ -502,7 +510,7 @@ class SAM3Propagate:
                 real_state = sam3_model._ALL_INFERENCE_STATES.get(session_id, {}).get("state")
                 if real_state is not None:
                     log.info("Prefetching backbone features...")
-                    top_model.prefetch_backbone_features(real_state, batch_size=prefetch_batch_size, max_frames=prefetch_max_frames)
+                    top_model.prefetch_backbone_features(real_state, batch_size=prefetch_batch_size, max_frames=prefetch_max_frames, vram=prefetch_to_vram)
                 else:
                     log.warning("Could not find inference state for prefetch; skipping")
             else:

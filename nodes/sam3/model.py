@@ -8409,7 +8409,7 @@ class Sam3VideoInference(Sam3VideoBase):
         return inference_state
 
     @torch.inference_mode()
-    def prefetch_backbone_features(self, inference_state, batch_size: int = 4, max_frames: int = 0) -> None:
+    def prefetch_backbone_features(self, inference_state, batch_size: int = 4, max_frames: int = 0, vram: bool = False) -> None:
         """
         Pre-extract ViT backbone features for all frames before propagation.
 
@@ -8422,6 +8422,9 @@ class Sam3VideoInference(Sam3VideoBase):
                         but more VRAM; 4 is a safe default for most GPUs).
             max_frames: Maximum number of frames to prefetch (0 = all frames). Limits
                         CPU RAM usage at the cost of partial speedup for longer videos.
+            vram: Keep cached features on GPU instead of offloading to CPU RAM.
+                  Eliminates PCIe transfers during propagation for faster inference,
+                  but uses more VRAM (risk of OOM on long videos).
         """
         import logging
         log = logging.getLogger("sam3")
@@ -8486,18 +8489,32 @@ class Sam3VideoInference(Sam3VideoBase):
                     if _trim_key in frame_feats and isinstance(frame_feats[_trim_key], list) and len(frame_feats[_trim_key]) > _keep:
                         frame_feats[_trim_key] = frame_feats[_trim_key][-_keep:]
 
-                # Move to CPU to avoid holding N frames of features on GPU
-                pre_cache[frame_idx] = {
-                    k: (
-                        [x.cpu() for x in v] if isinstance(v, list) else
-                        v.cpu() if isinstance(v, torch.Tensor) else
-                        {k2: ([x.cpu() for x in v2] if isinstance(v2, list) else
-                               v2.cpu() if isinstance(v2, torch.Tensor) else v2)
-                         for k2, v2 in v.items()} if isinstance(v, dict) else
-                        v
-                    )
-                    for k, v in frame_feats.items()
-                }
+                if vram:
+                    # Keep on GPU: no PCIe transfers during propagation, uses more VRAM
+                    pre_cache[frame_idx] = {
+                        k: (
+                            [x.contiguous() for x in v] if isinstance(v, list) else
+                            v.contiguous() if isinstance(v, torch.Tensor) else
+                            {k2: ([x.contiguous() for x in v2] if isinstance(v2, list) else
+                                   v2.contiguous() if isinstance(v2, torch.Tensor) else v2)
+                             for k2, v2 in v.items()} if isinstance(v, dict) else
+                            v
+                        )
+                        for k, v in frame_feats.items()
+                    }
+                else:
+                    # Offload to CPU RAM to keep VRAM free during propagation
+                    pre_cache[frame_idx] = {
+                        k: (
+                            [x.cpu() for x in v] if isinstance(v, list) else
+                            v.cpu() if isinstance(v, torch.Tensor) else
+                            {k2: ([x.cpu() for x in v2] if isinstance(v2, list) else
+                                   v2.cpu() if isinstance(v2, torch.Tensor) else v2)
+                             for k2, v2 in v.items()} if isinstance(v, dict) else
+                            v
+                        )
+                        for k, v in frame_feats.items()
+                    }
 
             log.debug(f"Prefetched frames {batch_start}-{batch_end - 1}")
 
