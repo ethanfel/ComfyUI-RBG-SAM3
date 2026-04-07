@@ -8405,6 +8405,75 @@ class Sam3VideoInference(Sam3VideoBase):
         return inference_state
 
     @torch.inference_mode()
+    def prefetch_backbone_features(self, inference_state, batch_size: int = 4) -> None:
+        """
+        Pre-extract ViT backbone features for all frames before propagation.
+
+        Stores results in inference_state["feature_cache"]["_pre_extracted_backbone"]
+        so _get_img_feats can skip the backbone during the propagation loop.
+
+        Args:
+            inference_state: Active inference state from init_state().
+            batch_size: Number of frames to process per backbone call (higher = faster
+                        but more VRAM; 4 is a safe default for most GPUs).
+        """
+        import logging
+        log = logging.getLogger("sam3")
+
+        input_batch = inference_state["input_batch"]
+        num_frames = inference_state["num_frames"]
+        img_batch = input_batch.img_batch  # raw frames, shape [N, C, H, W] or list
+
+        pre_cache = {}
+        log.info(f"Prefetching backbone features for {num_frames} frames (batch_size={batch_size})")
+
+        for batch_start in range(0, num_frames, batch_size):
+            batch_end = min(batch_start + batch_size, num_frames)
+            frame_indices = list(range(batch_start, batch_end))
+
+            # Stack frames into a single batch tensor
+            if isinstance(img_batch, torch.Tensor):
+                imgs = img_batch[batch_start:batch_end].to(
+                    dtype=torch.float32, device=self.device
+                )
+            else:
+                imgs = torch.stack(
+                    [img_batch[i] for i in frame_indices]
+                ).to(dtype=torch.float32, device=self.device)
+
+            # Run backbone on the batch
+            batch_out = self.detector.backbone.forward_image(imgs)
+
+            # Split batch output back into per-frame entries
+            for local_idx, frame_idx in enumerate(frame_indices):
+                frame_feats = {}
+                for key, val in batch_out.items():
+                    if isinstance(val, torch.Tensor):
+                        frame_feats[key] = val[local_idx : local_idx + 1]
+                    elif isinstance(val, (list, tuple)):
+                        # FPN levels: each is a tensor [B, C, H, W]
+                        frame_feats[key] = [
+                            v[local_idx : local_idx + 1] if isinstance(v, torch.Tensor) else v
+                            for v in val
+                        ]
+                    else:
+                        frame_feats[key] = val
+                # Move to CPU to avoid holding N frames of features on GPU
+                pre_cache[frame_idx] = {
+                    k: (
+                        [x.cpu() for x in v] if isinstance(v, list) else
+                        v.cpu() if isinstance(v, torch.Tensor) else v
+                    )
+                    for k, v in frame_feats.items()
+                }
+
+            log.debug(f"Prefetched frames {batch_start}-{batch_end - 1}")
+
+        inference_state["feature_cache"]["_pre_extracted_backbone"] = pre_cache
+        inference_state["feature_cache"]["_prefetch_keep_all"] = True
+        log.info("Backbone prefetch complete")
+
+    @torch.inference_mode()
     def warm_up_compilation(self):
         """
         Warm up the model by running a dummy inference to compile the model. This is
