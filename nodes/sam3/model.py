@@ -6570,7 +6570,8 @@ class Sam3VideoBase(nn.Module):
             input_batch.img_batch[frame_idx],
             backbone_cache,
         )
-        feature_cache.pop(frame_idx - 1 if not reverse else frame_idx + 1, None)
+        if not feature_cache.get("_prefetch_keep_all"):
+            feature_cache.pop(frame_idx - 1 if not reverse else frame_idx + 1, None)
         return det_out
 
     def run_tracker_propagation(
