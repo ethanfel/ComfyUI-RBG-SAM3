@@ -28,7 +28,7 @@ def comfy_image_to_pil(image):
         img_np = image.cpu().numpy()
 
         # Convert from [0, 1] to [0, 255]
-        img_np = (img_np * 255).astype(np.uint8)
+        img_np = np.clip(img_np * 255, 0, 255).astype(np.uint8)
 
         # Convert to PIL
         pil_image = Image.fromarray(img_np)

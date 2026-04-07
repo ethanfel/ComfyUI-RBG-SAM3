@@ -177,10 +177,7 @@ class SAM3VideoSegmentation:
             frame_idx,
             score_threshold,
         ))
-        log.info(f"IS_CHANGED SAM3VideoSegmentation: video_hash={video_hash}, prompt_mode={prompt_mode}")
-        log.info(f"IS_CHANGED SAM3VideoSegmentation: positive_points={positive_points}")
-        log.info(f"IS_CHANGED SAM3VideoSegmentation: negative_points={negative_points}")
-        log.info(f"IS_CHANGED SAM3VideoSegmentation: returning hash={result}")
+        log.debug(f"IS_CHANGED SAM3VideoSegmentation: video_hash={video_hash}, prompt_mode={prompt_mode}, hash={result}")
         return result
 
     RETURN_TYPES = ("SAM3_VIDEO_STATE",)
@@ -363,7 +360,9 @@ class SAM3VideoSegmentation:
         log.info(f"Total prompts: {len(video_state.prompts)}")
         print_mem("After video segmentation")
 
-        # Cache the result
+        # Cache the result (keep at most 3 entries — evict oldest on overflow)
+        if len(SAM3VideoSegmentation._cache) >= 3:
+            SAM3VideoSegmentation._cache.pop(next(iter(SAM3VideoSegmentation._cache)))
         SAM3VideoSegmentation._cache[cache_key] = video_state
 
         return (video_state,)
@@ -422,8 +421,7 @@ class SAM3Propagate:
         # it returns the same object, so id() will match
         # This is more reliable than hashing content since video_state is immutable
         result = (id(video_state), start_frame, end_frame, direction)
-        log.info(f"IS_CHANGED SAM3Propagate: video_state id={id(video_state)}, session={video_state.session_uuid if video_state else None}")
-        log.info(f"IS_CHANGED SAM3Propagate: returning {result}")
+        log.debug(f"IS_CHANGED SAM3Propagate: video_state id={id(video_state)}, result={result}")
         return result
 
     def propagate(self, sam3_model, video_state, start_frame=0, end_frame=-1, direction="forward"):
@@ -443,10 +441,8 @@ class SAM3Propagate:
         if len(video_state.prompts) == 0:
             raise ValueError("[SAM3 Video] No prompts added. Add point, box, or text prompts before propagating.")
 
-        # Ensure model is on GPU before inference (may have been offloaded)
-        if hasattr(sam3_model, 'model') and hasattr(sam3_model.model, 'to'):
-            device = comfy.model_management.get_torch_device()
-            sam3_model.model.to(device)
+        # Load model to GPU via ComfyUI's memory manager (handles VRAM pressure correctly)
+        comfy.model_management.load_models_gpu([sam3_model])
 
         log.info(f"Starting propagation: frames {start_frame} to {end_frame if end_frame >= 0 else 'end'}")
         log.info(f"Prompts: {len(video_state.prompts)}")
@@ -510,10 +506,8 @@ class SAM3Propagate:
                         scores_dict[frame_idx] = probs
                         break
 
-                # Periodic cleanup and memory monitoring
-                if frame_idx % 10 == 0:
+                if frame_idx % 50 == 0:
                     print_mem(f"Propagation frame {frame_idx}/{video_state.num_frames}")
-                    gc.collect()
 
         except Exception as e:
             log.error(f"Propagation error: {e}", exc_info=True)
@@ -527,8 +521,10 @@ class SAM3Propagate:
         gc.collect()
         comfy.model_management.soft_empty_cache()
 
-        # Cache the result
+        # Cache the result (keep at most 3 entries — evict oldest on overflow)
         result = (masks_dict, scores_dict, video_state)
+        if len(SAM3Propagate._cache) >= 3:
+            SAM3Propagate._cache.pop(next(iter(SAM3Propagate._cache)))
         SAM3Propagate._cache[cache_key] = result
 
         return result
@@ -618,21 +614,24 @@ class SAM3VideoOutput:
         start_x = padding
         start_y = padding
 
-        # Draw semi-transparent background
+        # Draw semi-transparent background (vectorized — single slice op)
         bg_alpha = 0.7
-        for y in range(start_y, min(start_y + legend_height, h)):
-            for x in range(start_x, min(start_x + legend_width, w)):
-                vis_frame[y, x] = vis_frame[y, x] * (1 - bg_alpha) + torch.tensor([0.1, 0.1, 0.1]) * bg_alpha
+        bg_color = torch.tensor([0.1, 0.1, 0.1], dtype=vis_frame.dtype)
+        y_end = min(start_y + legend_height, h)
+        x_end = min(start_x + legend_width, w)
+        vis_frame[start_y:y_end, start_x:x_end] = (
+            vis_frame[start_y:y_end, start_x:x_end] * (1 - bg_alpha) + bg_color * bg_alpha
+        )
 
         # Draw legend items (already sorted by confidence)
         for idx, (oid, score) in enumerate(items):
             item_y = start_y + padding + idx * legend_item_height
 
-            # Draw color box
-            color = torch.tensor(colors[oid % len(colors)])
-            for y in range(item_y, min(item_y + box_size, h)):
-                for x in range(start_x + padding, min(start_x + padding + box_size, w)):
-                    vis_frame[y, x] = color
+            # Draw color box (vectorized — single slice op)
+            color = torch.tensor(colors[oid % len(colors)], dtype=vis_frame.dtype)
+            cy_end = min(item_y + box_size, h)
+            cx_end = min(start_x + padding + box_size, w)
+            vis_frame[item_y:cy_end, start_x + padding:cx_end] = color
 
             # Draw "X: 0.95" text using simple pixel font
             text_x = start_x + padding + box_size + padding
@@ -646,43 +645,24 @@ class SAM3VideoOutput:
         return vis_frame
 
     def _draw_text(self, img, text, x, y, size):
-        """Draw simple text using basic shapes (no font dependencies)."""
-        # Simple 3x5 pixel font for digits and punctuation
-        chars = {
-            '0': [[1,1,1], [1,0,1], [1,0,1], [1,0,1], [1,1,1]],
-            '1': [[0,1,0], [1,1,0], [0,1,0], [0,1,0], [1,1,1]],
-            '2': [[1,1,1], [0,0,1], [1,1,1], [1,0,0], [1,1,1]],
-            '3': [[1,1,1], [0,0,1], [1,1,1], [0,0,1], [1,1,1]],
-            '4': [[1,0,1], [1,0,1], [1,1,1], [0,0,1], [0,0,1]],
-            '5': [[1,1,1], [1,0,0], [1,1,1], [0,0,1], [1,1,1]],
-            '6': [[1,1,1], [1,0,0], [1,1,1], [1,0,1], [1,1,1]],
-            '7': [[1,1,1], [0,0,1], [0,0,1], [0,0,1], [0,0,1]],
-            '8': [[1,1,1], [1,0,1], [1,1,1], [1,0,1], [1,1,1]],
-            '9': [[1,1,1], [1,0,1], [1,1,1], [0,0,1], [1,1,1]],
-            ':': [[0,0,0], [0,1,0], [0,0,0], [0,1,0], [0,0,0]],
-            '.': [[0,0,0], [0,0,0], [0,0,0], [0,0,0], [0,1,0]],
-        }
-
+        """Draw text using PIL (fast) — converts slice to PIL, draws, writes back."""
+        from PIL import Image as PILImage, ImageDraw
         h, w = img.shape[:2]
-        scale = max(1, size // 6)
-        char_width = 4 * scale
-
-        curr_x = x
-        for char in text:
-            if char in chars:
-                pattern = chars[char]
-                for row_idx, row in enumerate(pattern):
-                    for col_idx, pixel in enumerate(row):
-                        if pixel:
-                            for sy in range(scale):
-                                for sx in range(scale):
-                                    px = curr_x + col_idx * scale + sx
-                                    py = y + row_idx * scale + sy
-                                    if 0 <= px < w and 0 <= py < h:
-                                        img[py, px] = torch.tensor([1.0, 1.0, 1.0])
-                curr_x += char_width
-            elif char == ' ':
-                curr_x += char_width  # Space
+        font_size = max(8, size)
+        # Crop the legend region to avoid converting the entire frame
+        x_end = min(x + len(text) * font_size, w)
+        y_end = min(y + font_size + 2, h)
+        if x >= w or y >= h or x_end <= x or y_end <= y:
+            return
+        region = img[y:y_end, x:x_end]
+        pil_region = PILImage.fromarray(
+            np.clip(region.numpy() * 255, 0, 255).astype(np.uint8)
+        )
+        draw = ImageDraw.Draw(pil_region)
+        draw.text((0, 0), text, fill=(255, 255, 255))
+        img[y:y_end, x:x_end] = torch.from_numpy(
+            np.array(pil_region).astype(np.float32) / 255.0
+        )
 
     def extract(self, masks, video_state, scores=None, obj_id=-1, plot_all_masks=True):
         """Extract all masks as a batch [N, H, W] using memory-mapped streaming.
@@ -888,7 +868,10 @@ class SAM3VideoOutput:
         print_mem("After extract")
 
         # Cache the result (tensors backed by mmap files - minimal RAM)
+        # Keep at most 3 entries — evict oldest on overflow
         result = (all_masks, all_frames, all_vis)
+        if len(SAM3VideoOutput._cache) >= 3:
+            SAM3VideoOutput._cache.pop(next(iter(SAM3VideoOutput._cache)))
         SAM3VideoOutput._cache[cache_key] = result
 
         return result

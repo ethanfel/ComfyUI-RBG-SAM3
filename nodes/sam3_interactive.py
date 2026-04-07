@@ -28,6 +28,7 @@ except Exception:
     server = None
     _SERVER_AVAILABLE = False
 from .utils import comfy_image_to_pil, visualize_masks_on_image, masks_to_comfy_mask, pil_to_comfy_image
+from .sam3.utils import masks_to_boxes as _masks_to_boxes
 
 log = logging.getLogger("sam3")
 
@@ -38,6 +39,17 @@ _INTERACTIVE_CACHE = {}
 
 # Serializes GPU work from parallel per-prompt requests
 _SEGMENT_LOCK = threading.Lock()
+
+# Max number of interactive node states to keep alive (each holds GPU tensors)
+_INTERACTIVE_CACHE_MAX = 5
+
+
+def _img_tensor_to_base64(tensor) -> str:
+    """Convert ComfyUI [B,H,W,C] float tensor to JPEG base64 string."""
+    arr = np.clip(tensor[0].cpu().numpy() * 255, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(arr).save(buf, format="JPEG", quality=75)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 class SAM3PointCollector:
@@ -145,7 +157,7 @@ class SAM3PointCollector:
             normalized_y = p['y'] / img_height
             positive_points["points"].append([normalized_x, normalized_y])
             positive_points["labels"].append(1)
-            log.info(f"  Positive point: ({p['x']:.1f}, {p['y']:.1f}) -> ({normalized_x:.3f}, {normalized_y:.3f})")
+            log.debug(f"  Positive point: ({p['x']:.1f}, {p['y']:.1f}) -> ({normalized_x:.3f}, {normalized_y:.3f})")
 
         # Add negative points (label = 0) - normalize to 0-1
         for n in neg_coords:
@@ -153,12 +165,14 @@ class SAM3PointCollector:
             normalized_y = n['y'] / img_height
             negative_points["points"].append([normalized_x, normalized_y])
             negative_points["labels"].append(0)
-            log.info(f"  Negative point: ({n['x']:.1f}, {n['y']:.1f}) -> ({normalized_x:.3f}, {normalized_y:.3f})")
+            log.debug(f"  Negative point: ({n['x']:.1f}, {n['y']:.1f}) -> ({normalized_x:.3f}, {normalized_y:.3f})")
 
         log.info(f"Output: {len(positive_points['points'])} positive, {len(negative_points['points'])} negative")
 
-        # Cache the result
+        # Cache the result (cap at 3 entries)
         result = (positive_points, negative_points)
+        if len(SAM3PointCollector._cache) >= 3:
+            SAM3PointCollector._cache.pop(next(iter(SAM3PointCollector._cache)))
         SAM3PointCollector._cache[cache_key] = result
 
         # Send image back to widget as base64
@@ -170,21 +184,7 @@ class SAM3PointCollector:
         }
 
     def tensor_to_base64(self, tensor):
-        """Convert ComfyUI image tensor to base64 string for JavaScript widget"""
-        # Convert from [B, H, W, C] to PIL Image
-        # Take first image if batch
-        img_array = tensor[0].cpu().numpy()
-        # Convert from 0-1 float to 0-255 uint8
-        img_array = (img_array * 255).astype(np.uint8)
-        pil_img = Image.fromarray(img_array)
-
-        # Convert to base64
-        buffered = io.BytesIO()
-        pil_img.save(buffered, format="JPEG", quality=75)
-        img_bytes = buffered.getvalue()
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-
-        return img_base64
+        return _img_tensor_to_base64(tensor)
 
 
 class SAM3BBoxCollector:
@@ -302,7 +302,7 @@ class SAM3BBoxCollector:
 
             positive_boxes.append([center_x, center_y, width, height])
             positive_labels.append(True)  # Positive boxes
-            log.info(f"  Positive BBox: ({bbox['x1']:.1f}, {bbox['y1']:.1f}, {bbox['x2']:.1f}, {bbox['y2']:.1f}) -> center=({center_x:.3f}, {center_y:.3f}) size=({width:.3f}, {height:.3f})")
+            log.debug(f"  Positive BBox: ({bbox['x1']:.1f}, {bbox['y1']:.1f}, {bbox['x2']:.1f}, {bbox['y2']:.1f}) -> center=({center_x:.3f}, {center_y:.3f}) size=({width:.3f}, {height:.3f})")
 
         # Add negative bboxes (label = False)
         for bbox in neg_bbox_list:
@@ -321,7 +321,7 @@ class SAM3BBoxCollector:
 
             negative_boxes.append([center_x, center_y, width, height])
             negative_labels.append(False)  # Negative boxes
-            log.info(f"  Negative BBox: ({bbox['x1']:.1f}, {bbox['y1']:.1f}, {bbox['x2']:.1f}, {bbox['y2']:.1f}) -> center=({center_x:.3f}, {center_y:.3f}) size=({width:.3f}, {height:.3f})")
+            log.debug(f"  Negative BBox: ({bbox['x1']:.1f}, {bbox['y1']:.1f}, {bbox['x2']:.1f}, {bbox['y2']:.1f}) -> center=({center_x:.3f}, {center_y:.3f}) size=({width:.3f}, {height:.3f})")
 
         log.info(f"Output: {len(positive_boxes)} positive, {len(negative_boxes)} negative bboxes")
 
@@ -335,8 +335,10 @@ class SAM3BBoxCollector:
             "labels": negative_labels
         }
 
-        # Cache the result
+        # Cache the result (cap at 3 entries)
         result = (positive_prompt, negative_prompt)
+        if len(SAM3BBoxCollector._cache) >= 3:
+            SAM3BBoxCollector._cache.pop(next(iter(SAM3BBoxCollector._cache)))
         SAM3BBoxCollector._cache[cache_key] = result
 
         # Send image back to widget as base64
@@ -348,21 +350,7 @@ class SAM3BBoxCollector:
         }
 
     def tensor_to_base64(self, tensor):
-        """Convert ComfyUI image tensor to base64 string for JavaScript widget"""
-        # Convert from [B, H, W, C] to PIL Image
-        # Take first image if batch
-        img_array = tensor[0].cpu().numpy()
-        # Convert from 0-1 float to 0-255 uint8
-        img_array = (img_array * 255).astype(np.uint8)
-        pil_img = Image.fromarray(img_array)
-
-        # Convert to base64
-        buffered = io.BytesIO()
-        pil_img.save(buffered, format="JPEG", quality=75)
-        img_bytes = buffered.getvalue()
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-
-        return img_base64
+        return _img_tensor_to_base64(tensor)
 
 
 class SAM3MultiRegionCollector:
@@ -512,8 +500,10 @@ class SAM3MultiRegionCollector:
 
         log.info(f"Output: {len(multi_prompts)} non-empty prompts")
 
-        # Cache and return
+        # Cache and return (cap at 3 entries)
         result = (multi_prompts,)
+        if len(SAM3MultiRegionCollector._cache) >= 3:
+            SAM3MultiRegionCollector._cache.pop(next(iter(SAM3MultiRegionCollector._cache)))
         SAM3MultiRegionCollector._cache[cache_key] = result
         img_base64 = self.tensor_to_base64(image)
 
@@ -523,17 +513,7 @@ class SAM3MultiRegionCollector:
         }
 
     def tensor_to_base64(self, tensor):
-        """Convert ComfyUI image tensor to base64 string for JavaScript widget"""
-        img_array = tensor[0].cpu().numpy()
-        img_array = (img_array * 255).astype(np.uint8)
-        pil_img = Image.fromarray(img_array)
-
-        buffered = io.BytesIO()
-        pil_img.save(buffered, format="JPEG", quality=75)
-        img_bytes = buffered.getvalue()
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
-
-        return img_base64
+        return _img_tensor_to_base64(tensor)
 
 
 class SAM3InteractiveCollector:
@@ -675,7 +655,9 @@ class SAM3InteractiveCollector:
 
         state = processor.set_image(pil_image)
 
-        # Cache for the API route
+        # Cache for the API route — evict oldest entry when full
+        if len(_INTERACTIVE_CACHE) >= _INTERACTIVE_CACHE_MAX:
+            _INTERACTIVE_CACHE.pop(next(iter(_INTERACTIVE_CACHE)))
         _INTERACTIVE_CACHE[str(unique_id)] = {
             "sam3_model": sam3_model,
             "model": model,
@@ -707,17 +689,7 @@ class SAM3InteractiveCollector:
         masks = torch.stack(all_masks, dim=0)
         scores = torch.tensor(all_scores)
 
-        # Bounding boxes for visualization
-        boxes_list = []
-        for i in range(masks.shape[0]):
-            coords = torch.where(masks[i] > 0)
-            if len(coords[0]) > 0:
-                boxes_list.append([coords[1].min().item(), coords[0].min().item(),
-                                   coords[1].max().item(), coords[0].max().item()])
-            else:
-                boxes_list.append([0, 0, 0, 0])
-        boxes = torch.tensor(boxes_list).float()
-
+        boxes = _masks_to_boxes(masks.bool())
         comfy_masks = masks_to_comfy_mask(masks)
         vis_image = visualize_masks_on_image(pil_image, masks, boxes, scores, alpha=0.5)
         vis_tensor = pil_to_comfy_image(vis_image)
@@ -732,12 +704,7 @@ class SAM3InteractiveCollector:
 
     @staticmethod
     def _tensor_to_base64(tensor):
-        arr = tensor[0].cpu().numpy()
-        arr = (arr * 255).astype(np.uint8)
-        pil_img = Image.fromarray(arr)
-        buf = io.BytesIO()
-        pil_img.save(buf, format="JPEG", quality=75)
-        return base64.b64encode(buf.getvalue()).decode("utf-8")
+        return _img_tensor_to_base64(tensor)
 
     @staticmethod
     def _pil_to_base64(pil_img):
@@ -774,16 +741,7 @@ def _run_segment_sync(cached, raw_prompts):
     masks = torch.stack(all_masks, dim=0)
     scores = torch.tensor(all_scores)
 
-    boxes_list = []
-    for i in range(masks.shape[0]):
-        coords = torch.where(masks[i] > 0)
-        if len(coords[0]) > 0:
-            boxes_list.append([coords[1].min().item(), coords[0].min().item(),
-                               coords[1].max().item(), coords[0].max().item()])
-        else:
-            boxes_list.append([0, 0, 0, 0])
-    boxes = torch.tensor(boxes_list).float()
-
+    boxes = _masks_to_boxes(masks.bool())
     vis_image = visualize_masks_on_image(pil_image, masks, boxes, scores, alpha=0.5)
     buf = io.BytesIO()
     vis_image.save(buf, format="JPEG", quality=80)

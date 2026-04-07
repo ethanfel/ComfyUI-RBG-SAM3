@@ -73,7 +73,7 @@ class InferenceReconstructor:
             cached = self._cache.get(cache_key)
             if cached is not None:
                 log.info(f"Using cached inference state for {video_state.session_uuid[:8]}")
-                return cached
+                return cached.state
 
         log.info(f"Reconstructing inference state for {video_state.session_uuid[:8]}")
         print_mem("Before start_session")
@@ -103,7 +103,6 @@ class InferenceReconstructor:
         # Re-apply all prompts in order using session_id
         for prompt in video_state.prompts:
             self._apply_prompt(model, video_state.session_uuid, prompt)
-            print_mem(f"After apply prompt obj={prompt.obj_id}")
 
         # Store with weak reference
         # Create a wrapper to allow weak referencing

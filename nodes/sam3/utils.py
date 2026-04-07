@@ -385,8 +385,7 @@ class SAM3Output(list):
         ]:
             return len(self.output)
         elif self.iter_mode == SAM3Output.IterMode.FLATTENED:
-            flattened_output = sum(self.output, [])
-            return len(flattened_output)
+            return sum(len(inner) for inner in self.output)
 
 
 # ===========================================================================
@@ -1304,10 +1303,7 @@ class Sam3Processor:
             height, width = image.shape[-2:]
         else:
             raise ValueError("Image must be a PIL image or a tensor")
-        try:
-            model_device = next(self.model.parameters()).device
-        except StopIteration:
-            model_device = torch.device(self.device)
+        model_device = torch.device(self.device)
         image = v2.functional.to_image(image).to(model_device)
         image = self.transform(image).unsqueeze(0)
         # Native ComfyUI pattern: cast input to target dtype at the pipeline
@@ -1344,10 +1340,7 @@ class Sam3Processor:
         assert isinstance(images[0], Image.Image), "Images must be a list of PIL images"
         state["original_heights"] = [image.height for image in images]
         state["original_widths"] = [image.width for image in images]
-        try:
-            model_device = next(self.model.parameters()).device
-        except StopIteration:
-            model_device = torch.device(self.device)
+        model_device = torch.device(self.device)
         images = [
             self.transform(v2.functional.to_image(image).to(model_device))
             for image in images
@@ -1491,7 +1484,7 @@ class Sam3Processor:
         boxes = box_cxcywh_to_xyxy(out_bbox)
         img_h = state["original_height"]
         img_w = state["original_width"]
-        scale_fct = torch.tensor([img_w, img_h, img_w, img_h]).to(self.device)
+        scale_fct = torch.tensor([img_w, img_h, img_w, img_h], device=self.device)
         boxes = boxes * scale_fct[None, :]
         out_masks = interpolate(
             out_masks.unsqueeze(1), (img_h, img_w), mode="bilinear", align_corners=False,

@@ -344,7 +344,7 @@ def create_video_state(
         # Convert from [H, W, C] float32 0-1 to uint8 0-255
         frame = (frame * 255).astype(np.uint8)
         img = Image.fromarray(frame)
-        img.save(os.path.join(temp_dir, f"{i:05d}.jpg"))
+        img.save(os.path.join(temp_dir, f"{i:05d}.jpg"), quality=95)
 
     log.info("Frames saved successfully")
 

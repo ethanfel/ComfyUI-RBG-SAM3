@@ -20,6 +20,7 @@ from .utils import (
     visualize_masks_on_image,
     tensor_to_list,
 )
+from .sam3.utils import masks_to_boxes as _masks_to_boxes
 
 
 class SAM3Grounding:
@@ -586,13 +587,9 @@ class SAM3Segmentation:
         # Set image and get backbone features
         state = processor.set_image(pil_image)
 
-        # Debug: check if sam2_backbone_out exists
         backbone_out = state.get("backbone_out", {})
-        if "sam2_backbone_out" in backbone_out:
-            log.info("sam2_backbone_out is available")
-        else:
-            log.warning("sam2_backbone_out NOT available")
-            log.warning(f"  backbone_out keys: {list(backbone_out.keys())}")
+        if "sam2_backbone_out" not in backbone_out:
+            log.warning("sam2_backbone_out not in backbone_out (keys: %s)", list(backbone_out.keys()))
 
         # Collect all points
         all_points = []
@@ -633,9 +630,7 @@ class SAM3Segmentation:
         point_labels = np.array(all_point_labels) if all_point_labels else None
 
         if point_coords is not None:
-            log.info(f"Points: {len(point_coords)}")
-            log.info(f"  Coords: {point_coords.tolist()}")
-            log.info(f"  Labels: {point_labels.tolist()}")
+            log.debug(f"Points: {len(point_coords)}, coords={point_coords.tolist()}, labels={point_labels.tolist()}")
 
         if point_coords is None and box_array is None:
             log.error("No prompts provided. Provide points or box.")
@@ -668,10 +663,7 @@ class SAM3Segmentation:
             )
             log.info(f"Refinement {i+1}/{refinement_iterations}, best score: {scores_np.max():.4f}")
 
-        log.info(f"Prediction returned {masks_np.shape[0]} masks")
-        log.info(f"  Mask shape: {masks_np.shape}")
-        log.info(f"  Low-res shape: {low_res_masks.shape}")
-        log.info(f"  Scores: {scores_np.tolist()}")
+        log.debug(f"Prediction: {masks_np.shape[0]} masks, scores={scores_np.tolist()}")
 
         if output_best_mask:
             # Select best mask (highest IoU score)
@@ -693,19 +685,7 @@ class SAM3Segmentation:
             scores = torch.from_numpy(scores_np).float()
             low_res_tensor = torch.from_numpy(low_res_masks).float()  # [N, H, W]
 
-        # Compute bounding boxes from masks
-        boxes_list = []
-        for i in range(masks.shape[0]):
-            mask_coords = torch.where(masks[i] > 0)
-            if len(mask_coords[0]) > 0:
-                y1 = mask_coords[0].min().item()
-                y2 = mask_coords[0].max().item()
-                x1 = mask_coords[1].min().item()
-                x2 = mask_coords[1].max().item()
-                boxes_list.append([x1, y1, x2, y2])
-            else:
-                boxes_list.append([0, 0, 0, 0])
-        boxes = torch.tensor(boxes_list).float()
+        boxes = _masks_to_boxes(masks.bool())
 
         # Convert to ComfyUI format
         comfy_masks = masks_to_comfy_mask(masks)
@@ -726,7 +706,6 @@ class SAM3Segmentation:
 
         # Cleanup
         del state
-        gc.collect()
         comfy.model_management.soft_empty_cache()
 
         return (comfy_masks, low_res_tensor, vis_tensor, boxes_json, scores_json)
@@ -919,19 +898,7 @@ class SAM3MultipromptSegmentation:
 
         log.info(f"Generated {masks.shape[0]} masks")
 
-        # Compute bounding boxes for visualization
-        boxes_list = []
-        for i in range(masks.shape[0]):
-            mask_coords = torch.where(masks[i] > 0)
-            if len(mask_coords[0]) > 0:
-                y1 = mask_coords[0].min().item()
-                y2 = mask_coords[0].max().item()
-                x1 = mask_coords[1].min().item()
-                x2 = mask_coords[1].max().item()
-                boxes_list.append([x1, y1, x2, y2])
-            else:
-                boxes_list.append([0, 0, 0, 0])
-        boxes = torch.tensor(boxes_list).float()
+        boxes = _masks_to_boxes(masks.bool())
 
         # Convert to ComfyUI format
         comfy_masks = masks_to_comfy_mask(masks)
@@ -944,7 +911,6 @@ class SAM3MultipromptSegmentation:
 
         # Cleanup
         del state
-        gc.collect()
         comfy.model_management.soft_empty_cache()
 
         return (comfy_masks, vis_tensor)

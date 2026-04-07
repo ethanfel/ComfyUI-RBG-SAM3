@@ -142,7 +142,6 @@ class Sam3VideoPredictor:
         session. If it is not defined, the start_session function will create
         a session id and return it.
         """
-        print_vram("Before init_state")
         # get an initial inference_state from the model
         inference_state = self.model.init_state(
             resource_path=resource_path,
@@ -150,7 +149,6 @@ class Sam3VideoPredictor:
             async_loading_frames=self.async_loading_frames,
             video_loader_type=self.video_loader_type,
         )
-        print_vram("After init_state")
         if not session_id:
             session_id = str(uuid.uuid4())
         self._ALL_INFERENCE_STATES[session_id] = {
@@ -275,8 +273,6 @@ class Sam3VideoPredictor:
         Close a session. This method is idempotent and can be called multiple
         times on the same "session_id".
         """
-        print_vram(f"Before close_session ({session_id[:8]})")
-        logger.info(f"Sessions before close: {len(self._ALL_INFERENCE_STATES)}")
         session = self._ALL_INFERENCE_STATES.pop(session_id, None)
         if session is None:
             logger.warning(
@@ -285,11 +281,8 @@ class Sam3VideoPredictor:
             )
         else:
             del session
-            gc.collect()
             comfy.model_management.soft_empty_cache()
-            logger.info(f"removed session {session_id}; {self._get_session_stats()}")
-        print_vram(f"After close_session ({session_id[:8]})")
-        logger.info(f"Sessions after close: {len(self._ALL_INFERENCE_STATES)}")
+            logger.info(f"removed session {session_id}; sessions remaining: {len(self._ALL_INFERENCE_STATES)}")
         return {"is_success": True}
 
     def _get_session(self, session_id):
