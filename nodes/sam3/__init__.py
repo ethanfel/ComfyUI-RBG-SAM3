@@ -125,14 +125,20 @@ def _load_checkpoint_file(checkpoint_path: str) -> dict:
     log.info(f"Loading checkpoint: {checkpoint_path}")
     state_dict = comfy.utils.load_torch_file(str(checkpoint_path))
 
-    # Check if this is an unsupported HuggingFace Transformers format
+    # HuggingFace Transformers format uses detector_model.*/tracker_model.* prefixes.
+    # Remap to the native format (detector.*/tracker.*) that our loader expects.
     sample_keys = list(state_dict.keys())[:10]
     if any(k.startswith('detector_model.') or k.startswith('tracker_model.') for k in sample_keys):
-        raise ValueError(
-            "This checkpoint uses the HuggingFace Transformers key format "
-            "(detector_model.*/tracker_model.*), which is not compatible with this loader. "
-            "Please use the native sam3.pt checkpoint and convert it to safetensors if needed."
-        )
+        log.info("HuggingFace Transformers key format detected: remapping detector_model.*/tracker_model.* → detector.*/tracker.*")
+        remapped = {}
+        for k, v in state_dict.items():
+            if k.startswith('detector_model.'):
+                remapped['detector.' + k[len('detector_model.'):]] = v
+            elif k.startswith('tracker_model.'):
+                remapped['tracker.' + k[len('tracker_model.'):]] = v
+            else:
+                remapped[k] = v
+        state_dict = remapped
 
     return state_dict
 
