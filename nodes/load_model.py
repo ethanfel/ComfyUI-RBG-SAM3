@@ -27,7 +27,7 @@ class LoadSAM3Model:
     # (filename, hf_repo_id, hf_filename)
     _MODEL_VERSIONS = {
         "sam3":   ("sam3.safetensors",        "apozz/sam3-safetensors",  "sam3.safetensors"),
-        "sam3.1": ("sam3.1.safetensors",       "mlx-community/sam3.1-bf16", "model.safetensors"),
+        "sam3.1": ("sam3.1_multiplex.pt",     "facebook/sam3.1",         "sam3.1_multiplex.pt"),
     }
 
     @classmethod
@@ -37,7 +37,7 @@ class LoadSAM3Model:
             "optional": {
                 "version": (["sam3", "sam3.1"], {
                     "default": "sam3",
-                    "tooltip": "Model version. sam3.1 downloads from mlx-community/sam3.1-bf16 (public, no login required)."
+                    "tooltip": "Model version. sam3.1 requires a HuggingFace account with access to facebook/sam3.1 (run 'huggingface-cli login' first)."
                 }),
                 "precision": (["auto", "bf16", "fp16", "fp32"], {
                     "default": "auto",
@@ -185,12 +185,7 @@ class LoadSAM3Model:
             local_dir=str(model_dir),
             local_dir_use_symlinks=False,
         )
-        # hf_hub_download saves using the remote filename; rename to local_filename if different
-        downloaded = model_dir / hf_filename
-        target = model_dir / local_filename
-        if downloaded != target and downloaded.exists():
-            downloaded.rename(target)
-        log.info(f"Model downloaded to: {target}")
+        log.info(f"Model downloaded to: {model_dir / local_filename}")
 
 
 NODE_CLASS_MAPPINGS = {
