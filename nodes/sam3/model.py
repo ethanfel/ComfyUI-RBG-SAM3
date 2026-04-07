@@ -6579,8 +6579,7 @@ class Sam3VideoBase(nn.Module):
             input_batch.img_batch[frame_idx],
             backbone_cache,
         )
-        if not feature_cache.get("_prefetch_keep_all"):
-            feature_cache.pop(frame_idx - 1 if not reverse else frame_idx + 1, None)
+        feature_cache.pop(frame_idx - 1 if not reverse else frame_idx + 1, None)
         return det_out
 
     def run_tracker_propagation(
@@ -8519,7 +8518,6 @@ class Sam3VideoInference(Sam3VideoBase):
             log.debug(f"Prefetched frames {batch_start}-{batch_end - 1}")
 
         inference_state["feature_cache"]["_pre_extracted_backbone"] = pre_cache
-        inference_state["feature_cache"]["_prefetch_keep_all"] = True
         log.info("Backbone prefetch complete")
 
     @torch.inference_mode()
