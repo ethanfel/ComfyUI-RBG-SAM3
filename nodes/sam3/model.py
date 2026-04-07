@@ -3478,7 +3478,11 @@ class Sam3Image(torch.nn.Module):
                 feats = {
                     k: (
                         [x.to(self.device) for x in v] if isinstance(v, list) else
-                        v.to(self.device) if isinstance(v, torch.Tensor) else v
+                        v.to(self.device) if isinstance(v, torch.Tensor) else
+                        {k2: (v2.to(self.device) if isinstance(v2, torch.Tensor) else
+                              [x.to(self.device) for x in v2] if isinstance(v2, list) else v2)
+                         for k2, v2 in v.items()} if isinstance(v, dict) else
+                        v
                     )
                     for k, v in raw.items()
                 }
@@ -8456,13 +8460,28 @@ class Sam3VideoInference(Sam3VideoBase):
                             v[local_idx : local_idx + 1] if isinstance(v, torch.Tensor) else v
                             for v in val
                         ]
+                    elif isinstance(val, dict) and val is not None:
+                        # Nested backbone output (e.g. sam2_backbone_out): slice tensors
+                        # and lists of tensors inside the dict so each frame gets [1,...] shapes.
+                        frame_feats[key] = {
+                            k2: (
+                                [v2[local_idx : local_idx + 1] if isinstance(v2, torch.Tensor) else v2
+                                 for v2 in v3] if isinstance(v3, (list, tuple)) else
+                                v3[local_idx : local_idx + 1] if isinstance(v3, torch.Tensor) else v3
+                            )
+                            for k2, v3 in val.items()
+                        }
                     else:
                         frame_feats[key] = val
                 # Move to CPU to avoid holding N frames of features on GPU
                 pre_cache[frame_idx] = {
                     k: (
                         [x.cpu() for x in v] if isinstance(v, list) else
-                        v.cpu() if isinstance(v, torch.Tensor) else v
+                        v.cpu() if isinstance(v, torch.Tensor) else
+                        {k2: ([x.cpu() for x in v2] if isinstance(v2, list) else
+                               v2.cpu() if isinstance(v2, torch.Tensor) else v2)
+                         for k2, v2 in v.items()} if isinstance(v, dict) else
+                        v
                     )
                     for k, v in frame_feats.items()
                 }
