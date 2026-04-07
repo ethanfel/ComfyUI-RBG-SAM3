@@ -3465,29 +3465,33 @@ class Sam3Image(torch.nn.Module):
             return backbone_out, img_feats, img_pos_embeds, vis_feat_sizes
 
         # Pre-computed backbone features: keyed by frame_idx, value is forward_image() output
-        _pre_computed = backbone_out.get("pre_computed_frame_features")
-        if _pre_computed is not None:
+        pre_computed = backbone_out.get("pre_computed_frame_features")
+        if pre_computed is not None:
             if img_ids.numel() > 1:
-                _uid, _ = torch.unique(img_ids, return_inverse=True)
+                uid, _ = torch.unique(img_ids, return_inverse=True)
             else:
-                _uid = img_ids
-            _fid = _uid.item() if _uid.numel() == 1 else None
-            if _fid is not None and _fid in _pre_computed:
-                _raw = _pre_computed[_fid]
-                _feats = {
+                uid = img_ids
+            fid = uid.item() if uid.numel() == 1 else None
+            img_batch_len = len(backbone_out["img_batch_all_stages"])
+            if fid is not None and fid in pre_computed and fid < img_batch_len:
+                raw = pre_computed[fid]
+                feats = {
                     k: (
                         [x.to(self.device) for x in v] if isinstance(v, list) else
                         v.to(self.device) if isinstance(v, torch.Tensor) else v
                     )
-                    for k, v in _raw.items()
+                    for k, v in raw.items()
                 }
-                _img_batch = backbone_out["img_batch_all_stages"]
-                _id_mapping = torch.full(
-                    (len(_img_batch),), -1, dtype=torch.long, device=self.device
+                id_mapping = torch.full(
+                    (img_batch_len,), -1, dtype=torch.long, device=self.device
                 )
-                _id_mapping[_uid] = 0
-                backbone_out = {**backbone_out, **_feats, "id_mapping": _id_mapping}
-                assert "backbone_fpn" in backbone_out
+                id_mapping[uid] = 0
+                backbone_out = {**backbone_out, **feats, "id_mapping": id_mapping}
+                if "backbone_fpn" not in backbone_out:
+                    raise RuntimeError(
+                        "pre_computed_frame_features entry is missing 'backbone_fpn'; "
+                        "check prefetch_backbone_features() output"
+                    )
                 return self._get_img_feats(backbone_out, img_ids=img_ids)
 
         img_batch = backbone_out["img_batch_all_stages"]
