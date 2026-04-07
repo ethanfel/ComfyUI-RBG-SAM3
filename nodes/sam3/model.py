@@ -6521,11 +6521,16 @@ class Sam3VideoBase(nn.Module):
         max_frame_num_to_track = tracking_bounds.get("max_frame_num_to_track")
         start_frame_idx = tracking_bounds.get("propagate_in_video_start_frame_idx")
 
+        _pre_extracted = feature_cache.get("_pre_extracted_backbone")
+        backbone_out_init = {
+            "img_batch_all_stages": input_batch.img_batch,
+            **text_outputs,
+        }
+        if _pre_extracted is not None:
+            backbone_out_init["pre_computed_frame_features"] = _pre_extracted
+
         sam3_image_out, _ = self.detector.forward_video_grounding_multigpu(
-            backbone_out={
-                "img_batch_all_stages": input_batch.img_batch,
-                **text_outputs,
-            },
+            backbone_out=backbone_out_init,
             find_inputs=input_batch.find_inputs,
             geometric_prompt=geometric_prompt,
             frame_idx=frame_idx,
