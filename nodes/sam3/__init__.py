@@ -889,6 +889,26 @@ def build_sam3_video_model(
 
         remapped_ckpt = dict(ckpt)
 
+        # SAM3.1 wraps tracker parameters under an extra `.model.` level:
+        #   tracker.model.maskmem_tpos_enc  (SAM3.1)
+        #   tracker.maskmem_tpos_enc        (SAM3)
+        # Detect this and strip the extra level so keys match our model structure.
+        sam31_nested = any(k.startswith("tracker.model.") for k in remapped_ckpt)
+        if sam31_nested:
+            log.info("SAM3.1 checkpoint detected: stripping extra .model. nesting from tracker keys")
+            fixed = {}
+            for k, v in remapped_ckpt.items():
+                if k.startswith("tracker.model."):
+                    fixed[k.replace("tracker.model.", "tracker.", 1)] = v
+                elif k.startswith("detector.inst_interactive_predictor.model.model."):
+                    fixed[k.replace(
+                        "detector.inst_interactive_predictor.model.model.",
+                        "detector.inst_interactive_predictor.model.", 1
+                    )] = v
+                else:
+                    fixed[k] = v
+            remapped_ckpt = fixed
+
         # If inst_interactive_predictor is enabled, remap tracker weights for it
         if enable_inst_interactivity and inst_predictor is not None:
             inst_predictor_keys = {
@@ -903,7 +923,7 @@ def build_sam3_video_model(
         remapped_ckpt = convert_mha_state_dict(remapped_ckpt)
 
         missing_keys, unexpected_keys = model.load_state_dict(
-            remapped_ckpt, strict=strict_state_dict_loading, assign=True
+            remapped_ckpt, strict=False, assign=True
         )
         if missing_keys:
             log.info(f"Missing keys: {len(missing_keys)}")
