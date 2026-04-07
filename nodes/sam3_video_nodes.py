@@ -442,7 +442,7 @@ class SAM3Propagate:
         import comfy.model_management
         """Run propagation using reconstructed inference state."""
         # Create cache key using video_state object id (since it's immutable and cached upstream)
-        cache_key = (id(video_state), start_frame, end_frame, direction)
+        cache_key = (id(video_state), start_frame, end_frame, direction, prefetch_features, prefetch_batch_size)
 
         # Check if we have cached result
         if cache_key in SAM3Propagate._cache:
