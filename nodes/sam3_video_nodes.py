@@ -487,8 +487,14 @@ class SAM3Propagate:
         if prefetch_features:
             top_model = sam3_model.model
             if hasattr(top_model, "prefetch_backbone_features"):
-                log.info("Prefetching backbone features...")
-                top_model.prefetch_backbone_features(inference_state, batch_size=prefetch_batch_size)
+                # inference_state is {"session_id": uuid} — get the real state from the model
+                session_id = video_state.session_uuid
+                real_state = sam3_model._ALL_INFERENCE_STATES.get(session_id, {}).get("state")
+                if real_state is not None:
+                    log.info("Prefetching backbone features...")
+                    top_model.prefetch_backbone_features(real_state, batch_size=prefetch_batch_size)
+                else:
+                    log.warning("Could not find inference state for prefetch; skipping")
             else:
                 log.warning("prefetch_features requested but model does not support it; skipping")
 
