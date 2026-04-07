@@ -8409,7 +8409,7 @@ class Sam3VideoInference(Sam3VideoBase):
         return inference_state
 
     @torch.inference_mode()
-    def prefetch_backbone_features(self, inference_state, batch_size: int = 4) -> None:
+    def prefetch_backbone_features(self, inference_state, batch_size: int = 4, max_frames: int = 0) -> None:
         """
         Pre-extract ViT backbone features for all frames before propagation.
 
@@ -8420,6 +8420,8 @@ class Sam3VideoInference(Sam3VideoBase):
             inference_state: Active inference state from init_state().
             batch_size: Number of frames to process per backbone call (higher = faster
                         but more VRAM; 4 is a safe default for most GPUs).
+            max_frames: Maximum number of frames to prefetch (0 = all frames). Limits
+                        CPU RAM usage at the cost of partial speedup for longer videos.
         """
         import logging
         log = logging.getLogger("sam3")
@@ -8428,10 +8430,12 @@ class Sam3VideoInference(Sam3VideoBase):
         num_frames = inference_state["num_frames"]
         img_batch = input_batch.img_batch  # raw frames, shape [N, C, H, W] or list
 
-        pre_cache = {}
-        log.info(f"Prefetching backbone features for {num_frames} frames (batch_size={batch_size})")
+        frames_to_prefetch = num_frames if max_frames <= 0 else min(max_frames, num_frames)
 
-        for batch_start in range(0, num_frames, batch_size):
+        pre_cache = {}
+        log.info(f"Prefetching backbone features for {frames_to_prefetch}/{num_frames} frames (batch_size={batch_size})")
+
+        for batch_start in range(0, frames_to_prefetch, batch_size):
             batch_end = min(batch_start + batch_size, num_frames)
             frame_indices = list(range(batch_start, batch_end))
 
