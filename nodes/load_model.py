@@ -185,7 +185,12 @@ class LoadSAM3Model:
             local_dir=str(model_dir),
             local_dir_use_symlinks=False,
         )
-        log.info(f"Model downloaded to: {model_dir / local_filename}")
+        # hf_hub_download saves using the remote filename; rename to local_filename if different
+        downloaded = model_dir / hf_filename
+        target = model_dir / local_filename
+        if downloaded != target and downloaded.exists():
+            downloaded.rename(target)
+        log.info(f"Model downloaded to: {target}")
 
 
 NODE_CLASS_MAPPINGS = {
