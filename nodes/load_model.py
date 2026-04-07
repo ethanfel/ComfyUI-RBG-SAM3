@@ -26,8 +26,7 @@ class LoadSAM3Model:
 
     # (filename, hf_repo_id, hf_filename)
     _MODEL_VERSIONS = {
-        "sam3":   ("sam3.safetensors",        "apozz/sam3-safetensors",  "sam3.safetensors"),
-        "sam3.1": ("sam3.1_multiplex.pt",     "facebook/sam3.1",         "sam3.1_multiplex.pt"),
+        "sam3": ("sam3.safetensors", "apozz/sam3-safetensors", "sam3.safetensors"),
     }
 
     @classmethod
@@ -35,10 +34,6 @@ class LoadSAM3Model:
         return {
             "required": {},
             "optional": {
-                "version": (["sam3", "sam3.1"], {
-                    "default": "sam3",
-                    "tooltip": "Model version. sam3.1 requires a HuggingFace account with access to facebook/sam3.1 (run 'huggingface-cli login' first)."
-                }),
                 "precision": (["auto", "bf16", "fp16", "fp32"], {
                     "default": "auto",
                     "tooltip": "Model precision. auto: best for your GPU (bf16 on Ampere+, fp16 on Volta/Turing, fp32 on older)."
@@ -59,7 +54,7 @@ class LoadSAM3Model:
     FUNCTION = "load_model"
     CATEGORY = "SAM3"
 
-    def load_model(self, version="sam3", precision="auto", attention="auto", compile=False):
+    def load_model(self, precision="auto", attention="auto", compile=False):
         from .sam3_model_patcher import SAM3UnifiedModel
         from .sam3.predictor import Sam3VideoPredictor
         from .sam3.utils import Sam3Processor
@@ -68,7 +63,7 @@ class LoadSAM3Model:
         load_device = comfy.model_management.get_torch_device()
         offload_device = comfy.model_management.unet_offload_device()
 
-        local_filename, hf_repo, hf_filename = self._MODEL_VERSIONS[version]
+        local_filename, hf_repo, hf_filename = self._MODEL_VERSIONS["sam3"]
         checkpoint_path = Path(comfy_base_path) / self.MODEL_DIR / local_filename
 
         # Auto-download if needed
