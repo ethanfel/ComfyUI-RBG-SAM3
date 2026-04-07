@@ -8454,6 +8454,20 @@ class Sam3VideoInference(Sam3VideoBase):
             # Run backbone on the batch
             batch_out = self.detector.backbone.forward_image(imgs)
 
+            # One-time debug: log all keys and tensor shapes in batch_out
+            if batch_start == 0:
+                def _describe(v, indent=0):
+                    pad = "  " * indent
+                    if isinstance(v, torch.Tensor):
+                        return f"{pad}Tensor {list(v.shape)} {v.dtype}"
+                    elif isinstance(v, (list, tuple)):
+                        return f"{pad}[{len(v)}x]\n" + "\n".join(_describe(x, indent+1) for x in v)
+                    elif isinstance(v, dict):
+                        return "\n".join(f"{pad}{k}: {_describe(val, indent+1)}" for k, val in v.items())
+                    return f"{pad}{type(v).__name__}"
+                log.info("batch_out structure (batch_size=%d):\n%s", len(frame_indices),
+                         "\n".join(f"  {k}:\n{_describe(v, 2)}" for k, v in batch_out.items()))
+
             # Split batch output back into per-frame entries
             for local_idx, frame_idx in enumerate(frame_indices):
                 frame_feats = {}
