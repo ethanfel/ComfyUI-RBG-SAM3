@@ -8477,6 +8477,15 @@ class Sam3VideoInference(Sam3VideoBase):
                         }
                     else:
                         frame_feats[key] = val
+                # Trim top-level FPN lists to only the last 3 levels.
+                # forward_image() returns all backbone stages including large high-res
+                # levels that are never read (_get_img_feats uses backbone_fpn[-N:] where
+                # N <= 3). Storing the full list can be 10-100x larger than needed.
+                _keep = 3
+                for _trim_key in ("backbone_fpn", "vision_pos_enc"):
+                    if _trim_key in frame_feats and isinstance(frame_feats[_trim_key], list) and len(frame_feats[_trim_key]) > _keep:
+                        frame_feats[_trim_key] = frame_feats[_trim_key][-_keep:]
+
                 # Move to CPU to avoid holding N frames of features on GPU
                 pre_cache[frame_idx] = {
                     k: (
