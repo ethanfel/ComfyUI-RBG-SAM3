@@ -29,8 +29,9 @@ log = logging.getLogger("sam3")
 # Auto-cleanup registry for temporary directories
 # =============================================================================
 
-_TEMP_DIR_REGISTRY = set()
+_TEMP_DIR_REGISTRY = []   # ordered list: oldest first
 _CLEANUP_REGISTERED = False
+_MAX_TEMP_DIRS = 3        # keep at most this many live temp dirs
 
 
 def _cleanup_temp_dirs():
@@ -68,7 +69,16 @@ def create_temp_dir(session_uuid: str) -> str:
     """
     _ensure_cleanup_registered()
     temp_dir = tempfile.mkdtemp(prefix=f"sam3_{session_uuid[:8]}_")
-    _TEMP_DIR_REGISTRY.add(temp_dir)
+    _TEMP_DIR_REGISTRY.append(temp_dir)
+    # Evict oldest temp dirs beyond the cap to prevent unbounded disk growth
+    while len(_TEMP_DIR_REGISTRY) > _MAX_TEMP_DIRS:
+        old = _TEMP_DIR_REGISTRY.pop(0)
+        try:
+            if os.path.exists(old):
+                shutil.rmtree(old, ignore_errors=True)
+                log.info(f"Evicted old temp dir: {old}")
+        except Exception:
+            pass
     return temp_dir
 
 
@@ -86,7 +96,10 @@ def cleanup_temp_dir(temp_dir: str):
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception:
         pass
-    _TEMP_DIR_REGISTRY.discard(temp_dir)
+    try:
+        _TEMP_DIR_REGISTRY.remove(temp_dir)
+    except ValueError:
+        pass
 
 
 # =============================================================================

@@ -885,17 +885,27 @@ class SAM3VideoOutput:
         vis_mmap.flush()
 
         # ============================================================
-        # Convert mmap to torch tensors (backed by disk, minimal RAM!)
+        # Copy mmap data to RAM tensors and immediately delete disk files
+        # ComfyUI holds these tensors in RAM regardless, so no extra cost.
+        # Keeping disk-backed tensors causes ~30 GB of mmap files to
+        # accumulate per run — critical in Docker where atexit may not fire.
         # ============================================================
-        all_masks = torch.from_numpy(mask_mmap)
-        all_frames = torch.from_numpy(frame_mmap)
-        all_vis = torch.from_numpy(vis_mmap)
+        masks_np = np.array(mask_mmap)    # copy mmap → RAM
+        frames_np = np.array(frame_mmap)
+        vis_np = np.array(vis_mmap)
+        del mask_mmap, frame_mmap, vis_mmap  # close mmap file handles
+        import shutil as _shutil
+        _shutil.rmtree(mmap_dir, ignore_errors=True)  # delete files immediately
+
+        all_masks = torch.from_numpy(masks_np)
+        all_frames = torch.from_numpy(frames_np)
+        all_vis = torch.from_numpy(vis_np)
 
         log.info(f"Output: {all_masks.shape[0]} masks, shape {all_masks.shape}")
         log.info(f"Objects tracked: {num_objects}, plot_all_masks: {plot_all_masks}")
         print_mem("After extract")
 
-        # Cache the result (tensors backed by mmap files - minimal RAM)
+        # Cache the result
         # Keep at most 3 entries — evict oldest on overflow
         result = (all_masks, all_frames, all_vis)
         if len(SAM3VideoOutput._cache) >= 3:
